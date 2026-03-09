@@ -136,7 +136,7 @@ export async function POST(request: NextRequest) {
         }
 
         let loopCount = 0
-        const maxLoops = 8
+        const maxLoops = 5
         const allCitedPages = new Set<number>()
         const allToolCalls: string[] = []
         let finalText = ''
