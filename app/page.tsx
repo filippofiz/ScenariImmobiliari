@@ -1,126 +1,346 @@
 'use client'
 
-import { useState } from 'react'
-import UploadZone from './components/UploadZone'
-import ChatInterface from './components/ChatInterface'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { useRouter } from 'next/navigation'
+import CitationCard from './components/CitationCard'
+
+interface Citation {
+  page_number: number
+  excerpt: string
+  chunk_id: string
+  similarity: number
+}
+
+interface Message {
+  role: 'user' | 'assistant'
+  content: string
+  citations?: Citation[]
+}
 
 interface DocInfo {
   id: string
   filename: string
-  pages: number
   chunks: number
 }
 
-export default function Home() {
-  const [docInfo, setDocInfo] = useState<DocInfo | null>(null)
+const SUGGESTED_QUESTIONS = [
+  'Qual è il patrimonio complessivo dei fondi immobiliari italiani?',
+  'Come si è evoluto il mercato dei fondi immobiliari nell\'ultimo anno?',
+  'Quali sono le principali tipologie di investimento?',
+  'Qual è il rendimento medio dei fondi immobiliari?',
+]
 
-  const handleUploadComplete = (documentId: string, filename: string, pages: number, chunks: number) => {
-    setDocInfo({ id: documentId, filename, pages, chunks })
+export default function ClientChat() {
+  const [messages, setMessages] = useState<Message[]>([])
+  const [input, setInput] = useState('')
+  const [isLoading, setIsLoading] = useState(false)
+  const [docInfo, setDocInfo] = useState<DocInfo | null>(null)
+  const [loadingDoc, setLoadingDoc] = useState(true)
+  const messagesEndRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
+  const router = useRouter()
+
+  // Load latest document on mount
+  useEffect(() => {
+    fetch('/api/documents')
+      .then(r => {
+        if (r.status === 401) { router.push('/login'); return null }
+        return r.json()
+      })
+      .then(docs => {
+        if (docs && docs.length > 0) {
+          setDocInfo({ id: docs[0].id, filename: docs[0].filename, chunks: docs[0].chunks })
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoadingDoc(false))
+  }, [router])
+
+  const scrollToBottom = useCallback(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [])
+
+  useEffect(() => { scrollToBottom() }, [messages, scrollToBottom])
+
+  const sendMessage = async (text: string) => {
+    if (!text.trim() || !docInfo || isLoading) return
+
+    const userMessage: Message = { role: 'user', content: text.trim() }
+    setMessages(prev => [...prev, userMessage])
+    setInput('')
+    setIsLoading(true)
+
+    const history = [...messages, userMessage]
+      .slice(-10)
+      .map(m => ({ role: m.role, content: m.content }))
+
+    try {
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: text.trim(),
+          document_id: docInfo.id,
+          history: history.slice(0, -1),
+        }),
+      })
+
+      const reader = response.body?.getReader()
+      const decoder = new TextDecoder()
+      if (!reader) throw new Error('No stream')
+
+      let assistantText = ''
+      let citations: Citation[] = []
+      setMessages(prev => [...prev, { role: 'assistant', content: '', citations: [] }])
+
+      let buffer = ''
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n\n')
+        buffer = lines.pop() || ''
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          const data = JSON.parse(line.slice(6))
+          if (data.type === 'citations') citations = data.citations
+          else if (data.type === 'text') {
+            assistantText += data.text
+            setMessages(prev => {
+              const u = [...prev]
+              u[u.length - 1] = { role: 'assistant', content: assistantText, citations }
+              return u
+            })
+          }
+        }
+      }
+
+      setMessages(prev => {
+        const u = [...prev]
+        u[u.length - 1] = { role: 'assistant', content: assistantText, citations }
+        return u
+      })
+    } catch (err) {
+      setMessages(prev => [
+        ...prev.filter(m => m.content !== ''),
+        { role: 'assistant', content: `Errore: ${err instanceof Error ? err.message : 'sconosciuto'}` },
+      ])
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    sendMessage(input)
+  }
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(input) }
+  }
+
+  const handleLogout = async () => {
+    await fetch('/api/auth', { method: 'DELETE' })
+    router.push('/login')
+  }
+
+  // Render text with citation badges
+  const renderText = (text: string) => {
+    const parts = text.split(/(\[p\.\d+\])/g)
+    return parts.map((part, i) => {
+      const m = part.match(/^\[p\.(\d+)\]$/)
+      if (m) return <span key={i} className="citation-badge">p.{m[1]}</span>
+      return <span key={i}>{part}</span>
+    })
   }
 
   return (
-    <div className="h-screen flex">
-      {/* Left Sidebar */}
-      <aside className="w-[280px] flex-shrink-0 bg-bg-card border-r border-border flex flex-col">
-        {/* Logo / Title */}
-        <div className="px-5 py-6 border-b border-border">
-          <h1 className="font-heading text-xl font-semibold text-text-primary leading-tight">
-            Scenari<br />Immobiliari
-          </h1>
-          <p className="text-xs text-text-muted mt-1 font-mono">RAG Dashboard</p>
-        </div>
+    <div className="h-screen flex flex-col bg-bg relative overflow-hidden">
+      {/* Ambient background effects */}
+      <div className="fixed top-0 right-0 w-[600px] h-[600px] bg-accent/[0.03] rounded-full blur-[150px] pointer-events-none" />
+      <div className="fixed bottom-0 left-0 w-[400px] h-[400px] bg-accent/[0.02] rounded-full blur-[120px] pointer-events-none" />
 
-        {/* Upload Section */}
-        <div className="px-4 py-5 border-b border-border">
-          <h2 className="text-xs font-mono text-text-muted uppercase tracking-wider mb-3">
-            Documento
-          </h2>
-          <UploadZone onUploadComplete={handleUploadComplete} />
-        </div>
-
-        {/* Document Stats */}
-        {docInfo && (
-          <div className="px-4 py-5 border-b border-border">
-            <h2 className="text-xs font-mono text-text-muted uppercase tracking-wider mb-3">
-              Statistiche
-            </h2>
-            <div className="space-y-3">
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-lg bg-accent/10 flex items-center justify-center">
-                  <svg className="w-4 h-4 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                      d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                    />
-                  </svg>
-                </div>
-                <div>
-                  <p className="text-xs text-text-muted">File</p>
-                  <p className="text-sm text-text-primary truncate max-w-[180px]">
-                    {docInfo.filename}
-                  </p>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <div className="bg-bg rounded-lg px-3 py-2">
-                  <p className="text-xs text-text-muted font-mono">Pagine</p>
-                  <p className="text-lg font-heading text-text-primary">{docInfo.pages}</p>
-                </div>
-                <div className="bg-bg rounded-lg px-3 py-2">
-                  <p className="text-xs text-text-muted font-mono">Chunks</p>
-                  <p className="text-lg font-heading text-text-primary">{docInfo.chunks}</p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
-                <p className="text-xs text-text-muted">Pronto per le query</p>
-              </div>
+      {/* Header */}
+      <header className="relative z-10 border-b border-border/60 backdrop-blur-xl bg-bg/80">
+        <div className="max-w-4xl mx-auto px-6 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-accent/10 border border-accent/20 flex items-center justify-center">
+              <svg className="w-5 h-5 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+                  d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"
+                />
+              </svg>
+            </div>
+            <div>
+              <h1 className="font-heading text-lg font-semibold text-text-primary leading-tight">
+                Scenari Immobiliari
+              </h1>
+              <p className="text-[11px] text-text-muted font-mono">Analisi documentale AI</p>
             </div>
           </div>
-        )}
 
-        {/* Footer */}
-        <div className="mt-auto px-4 py-4 border-t border-border">
-          <div className="flex items-center gap-2 text-xs text-text-muted/50">
-            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                d="M13 10V3L4 14h7v7l9-11h-7z"
-              />
-            </svg>
-            <span className="font-mono">Claude + Voyage AI + Supabase</span>
+          <div className="flex items-center gap-3">
+            {docInfo && (
+              <div className="hidden sm:flex items-center gap-2 text-xs text-text-muted bg-bg-card/60 border border-border/60 rounded-lg px-3 py-1.5 backdrop-blur">
+                <div className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+                <span className="font-mono">{docInfo.chunks} frammenti indicizzati</span>
+              </div>
+            )}
+            <button onClick={handleLogout} className="text-xs text-text-muted hover:text-text-primary transition-colors font-mono">
+              Esci
+            </button>
           </div>
         </div>
-      </aside>
+      </header>
 
-      {/* Main Chat Area */}
-      <main className="flex-1 flex flex-col bg-bg min-w-0">
-        {/* Header bar */}
-        <div className="px-6 py-4 border-b border-border flex items-center justify-between">
-          <div>
-            <h2 className="font-heading text-lg text-text-primary">
-              {docInfo ? 'Analisi Documento' : 'Benvenuto'}
-            </h2>
-            <p className="text-xs text-text-muted font-mono mt-0.5">
-              {docInfo
-                ? `Interroga il ${docInfo.filename}`
-                : 'Carica un rapporto per iniziare l\'analisi'
-              }
-            </p>
-          </div>
-          {docInfo && (
-            <div className="flex items-center gap-2 text-xs text-text-muted bg-bg-card border border-border rounded-lg px-3 py-1.5">
-              <div className="w-1.5 h-1.5 rounded-full bg-accent" />
-              <span className="font-mono">{docInfo.chunks} frammenti indicizzati</span>
+      {/* Chat area */}
+      <div className="flex-1 overflow-y-auto relative z-10">
+        <div className="max-w-4xl mx-auto px-6 py-6">
+          {/* Empty state */}
+          {messages.length === 0 && !loadingDoc && (
+            <div className="flex flex-col items-center justify-center min-h-[60vh] text-center">
+              <div className="w-20 h-20 rounded-3xl bg-gradient-to-br from-accent/20 to-accent/5 border border-accent/20 flex items-center justify-center mb-6">
+                <svg className="w-10 h-10 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1}
+                    d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
+                  />
+                </svg>
+              </div>
+
+              <h2 className="font-heading text-3xl font-semibold text-text-primary mb-2">
+                {docInfo ? 'Esplora il Rapporto' : 'Nessun documento'}
+              </h2>
+              <p className="text-text-muted max-w-md mb-8 leading-relaxed">
+                {docInfo
+                  ? 'Fai una domanda sul Rapporto Fondi Immobiliari. Ogni risposta includerà i riferimenti alle pagine del documento originale.'
+                  : 'Nessun documento è stato ancora caricato. Contatta l\'amministratore.'}
+              </p>
+
+              {docInfo && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full max-w-lg">
+                  {SUGGESTED_QUESTIONS.map((q, i) => (
+                    <button
+                      key={i}
+                      onClick={() => sendMessage(q)}
+                      className="text-left bg-bg-card/60 hover:bg-bg-card border border-border/60 hover:border-accent/30
+                        rounded-xl px-4 py-3 text-sm text-text-muted hover:text-text-primary
+                        transition-all duration-200 backdrop-blur group"
+                    >
+                      <span className="text-accent/60 group-hover:text-accent mr-1.5">&rarr;</span>
+                      {q}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           )}
-        </div>
 
-        {/* Chat */}
-        <div className="flex-1 min-h-0">
-          <ChatInterface documentId={docInfo?.id || null} />
+          {/* Loading doc state */}
+          {loadingDoc && (
+            <div className="flex items-center justify-center min-h-[60vh]">
+              <div className="flex items-center gap-3 text-text-muted">
+                <svg className="animate-spin w-5 h-5 text-accent" viewBox="0 0 24 24" fill="none">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+                <span className="font-mono text-sm">Caricamento...</span>
+              </div>
+            </div>
+          )}
+
+          {/* Messages */}
+          <div className="space-y-5">
+            {messages.map((msg, i) => (
+              <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                <div className={`max-w-[85%] ${msg.role === 'user' ? '' : 'flex gap-3'}`}>
+                  {/* AI avatar */}
+                  {msg.role === 'assistant' && (
+                    <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-accent/10 border border-accent/20 flex items-center justify-center mt-1">
+                      <svg className="w-4 h-4 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.75 3.104v5.714a2.25 2.25 0 01-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.301 24.301 0 014.5 0m0 0v5.714c0 .597.237 1.17.659 1.591L19.8 15.3M14.25 3.104c.251.023.501.05.75.082M19.8 15.3l-1.57.393A9.065 9.065 0 0112 15a9.065 9.065 0 00-6.23.693L5 14.5m14.8.8l1.402 1.402c1.232 1.232.65 3.318-1.067 3.611A48.309 48.309 0 0112 21c-2.773 0-5.491-.235-8.135-.687-1.718-.293-2.3-2.379-1.067-3.61L5 14.5" />
+                      </svg>
+                    </div>
+                  )}
+
+                  <div className={`rounded-2xl px-5 py-3.5 ${
+                    msg.role === 'user'
+                      ? 'bg-accent text-white rounded-br-md shadow-lg shadow-accent/10'
+                      : 'bg-bg-card/80 border border-border/60 rounded-bl-md backdrop-blur'
+                  }`}>
+                    <div className="text-sm leading-relaxed whitespace-pre-wrap">
+                      {msg.role === 'assistant' ? renderText(msg.content) : msg.content}
+                    </div>
+
+                    {msg.citations && msg.citations.length > 0 && (
+                      <div className="mt-3 pt-3 border-t border-border/40 space-y-1.5">
+                        <p className="text-[11px] text-text-muted font-mono uppercase tracking-wider mb-1">Fonti</p>
+                        {msg.citations.map((c, j) => (
+                          <CitationCard key={j} citation={c} />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+
+            {isLoading && messages[messages.length - 1]?.role === 'user' && (
+              <div className="flex justify-start">
+                <div className="flex gap-3">
+                  <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-accent/10 border border-accent/20 flex items-center justify-center mt-1">
+                    <svg className="w-4 h-4 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.75 3.104v5.714a2.25 2.25 0 01-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.301 24.301 0 014.5 0m0 0v5.714c0 .597.237 1.17.659 1.591L19.8 15.3M14.25 3.104c.251.023.501.05.75.082M19.8 15.3l-1.57.393A9.065 9.065 0 0112 15a9.065 9.065 0 00-6.23.693L5 14.5m14.8.8l1.402 1.402c1.232 1.232.65 3.318-1.067 3.611A48.309 48.309 0 0112 21c-2.773 0-5.491-.235-8.135-.687-1.718-.293-2.3-2.379-1.067-3.61L5 14.5" />
+                    </svg>
+                  </div>
+                  <div className="bg-bg-card/80 border border-border/60 rounded-2xl rounded-bl-md px-5 py-4 backdrop-blur">
+                    <div className="flex gap-1.5">
+                      <div className="typing-dot w-2 h-2 bg-accent rounded-full" />
+                      <div className="typing-dot w-2 h-2 bg-accent rounded-full" />
+                      <div className="typing-dot w-2 h-2 bg-accent rounded-full" />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div ref={messagesEndRef} />
         </div>
-      </main>
+      </div>
+
+      {/* Input area */}
+      <div className="relative z-10 border-t border-border/60 backdrop-blur-xl bg-bg/80">
+        <div className="max-w-4xl mx-auto px-6 py-4">
+          <form onSubmit={handleSubmit} className="flex gap-3">
+            <textarea
+              ref={inputRef}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder={docInfo ? 'Fai una domanda sul documento...' : 'Nessun documento disponibile...'}
+              disabled={!docInfo || isLoading}
+              rows={1}
+              className="flex-1 bg-bg-card/60 border border-border/60 rounded-xl px-4 py-3 text-sm
+                text-text-primary placeholder-text-muted/40 resize-none backdrop-blur
+                focus:outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/20
+                disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+            />
+            <button
+              type="submit"
+              disabled={!docInfo || !input.trim() || isLoading}
+              className="bg-accent hover:bg-accent-hover text-white rounded-xl px-5 py-3
+                transition-all disabled:opacity-30 disabled:cursor-not-allowed
+                shadow-lg shadow-accent/20 hover:shadow-accent/30
+                flex items-center justify-center"
+            >
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+              </svg>
+            </button>
+          </form>
+        </div>
+      </div>
     </div>
   )
 }
