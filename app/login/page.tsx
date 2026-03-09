@@ -39,50 +39,44 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen bg-bg flex items-center justify-center px-4">
-      {/* Subtle background grid */}
-      <div className="fixed inset-0 opacity-[0.03]" style={{
-        backgroundImage: `linear-gradient(rgba(0,155,141,0.3) 1px, transparent 1px),
-                          linear-gradient(90deg, rgba(0,155,141,0.3) 1px, transparent 1px)`,
-        backgroundSize: '60px 60px',
+    <div className="min-h-screen bg-white flex items-center justify-center px-4 font-sans relative overflow-hidden">
+      {/* Subtle background pattern */}
+      <div className="absolute inset-0 opacity-[0.03]" style={{
+        backgroundImage: `radial-gradient(circle at 1px 1px, #4E8EA7 1px, transparent 0)`,
+        backgroundSize: '40px 40px',
       }} />
 
-      <div className="relative w-full max-w-md">
-        {/* Glow effect */}
-        <div className="absolute -top-20 left-1/2 -translate-x-1/2 w-64 h-64 bg-accent/10 rounded-full blur-[100px]" />
+      {/* Soft gradient blob */}
+      <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-[500px] h-[500px] bg-teal/[0.04] rounded-full blur-[120px] pointer-events-none" />
 
-        <div className="relative bg-bg-card border border-border rounded-2xl p-8 shadow-2xl shadow-black/30">
+      <div className="relative w-full max-w-[400px] animate-fade-up">
+        <div className="bg-white rounded-2xl border border-border shadow-xl shadow-black/[0.04] p-8">
+          {/* Accent line top */}
+          <div className="absolute top-0 left-8 right-8 h-[2px] bg-gradient-to-r from-transparent via-brand-red/60 to-transparent rounded-full" />
+
           {/* Logo */}
-          <div className="text-center mb-8">
-            <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-accent/10 border border-accent/20 mb-4">
-              <svg className="w-7 h-7 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
-                  d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"
-                />
-              </svg>
+          <div className="text-center mb-8 pt-2">
+            <img src="/logo.png" alt="Scenari Immobiliari" className="h-[50px] w-auto mx-auto" />
+            <div className="mt-4 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-teal/[0.06] border border-teal/15">
+              <div className="w-1.5 h-1.5 rounded-full bg-teal animate-pulse" />
+              <span className="text-[10px] font-mono text-teal uppercase tracking-[0.1em]">AI Platform</span>
             </div>
-            <h1 className="font-heading text-2xl font-semibold text-text-primary">
-              Scenari Immobiliari
-            </h1>
-            <p className="text-sm text-text-muted mt-1">
-              Piattaforma di analisi documentale
-            </p>
           </div>
 
           {/* Form */}
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-5">
             <div>
-              <label className="block text-xs font-mono text-text-muted uppercase tracking-wider mb-1.5">
+              <label className="block text-[11px] font-medium text-text-secondary mb-1.5">
                 Username
               </label>
               <input
                 type="text"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                className="w-full bg-bg border border-border rounded-xl px-4 py-3 text-sm
-                  text-text-primary placeholder-text-muted/40
-                  focus:outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/20
-                  transition-colors"
+                className="w-full bg-bg-elevated border border-border rounded-xl px-4 py-3 text-sm
+                  text-text-primary placeholder-text-muted/50 font-sans
+                  focus:outline-none focus:border-teal/50 focus:ring-2 focus:ring-teal/10
+                  transition-all"
                 placeholder="Inserisci username"
                 autoComplete="username"
                 required
@@ -90,17 +84,17 @@ export default function LoginPage() {
             </div>
 
             <div>
-              <label className="block text-xs font-mono text-text-muted uppercase tracking-wider mb-1.5">
+              <label className="block text-[11px] font-medium text-text-secondary mb-1.5">
                 Password
               </label>
               <input
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full bg-bg border border-border rounded-xl px-4 py-3 text-sm
-                  text-text-primary placeholder-text-muted/40
-                  focus:outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/20
-                  transition-colors"
+                className="w-full bg-bg-elevated border border-border rounded-xl px-4 py-3 text-sm
+                  text-text-primary placeholder-text-muted/50 font-sans
+                  focus:outline-none focus:border-teal/50 focus:ring-2 focus:ring-teal/10
+                  transition-all"
                 placeholder="Inserisci password"
                 autoComplete="current-password"
                 required
@@ -108,18 +102,18 @@ export default function LoginPage() {
             </div>
 
             {error && (
-              <div className="bg-red-500/10 border border-red-500/20 rounded-lg px-4 py-2">
-                <p className="text-sm text-red-400">{error}</p>
+              <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-2.5">
+                <p className="text-sm text-red-600">{error}</p>
               </div>
             )}
 
             <button
               type="submit"
               disabled={loading}
-              className="w-full bg-accent hover:bg-accent-hover text-white font-medium
-                rounded-xl px-4 py-3 text-sm transition-all duration-200
+              className="w-full bg-teal hover:bg-teal-dim text-white font-medium text-sm
+                rounded-xl px-4 py-3 transition-all duration-200
                 disabled:opacity-50 disabled:cursor-not-allowed
-                shadow-lg shadow-accent/20 hover:shadow-accent/30"
+                shadow-md shadow-teal/15 hover:shadow-lg hover:shadow-teal/20"
             >
               {loading ? (
                 <span className="flex items-center justify-center gap-2">
@@ -127,7 +121,7 @@ export default function LoginPage() {
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                   </svg>
-                  Accesso...
+                  Accesso in corso...
                 </span>
               ) : (
                 'Accedi'
@@ -136,8 +130,8 @@ export default function LoginPage() {
           </form>
 
           {/* Footer */}
-          <div className="mt-6 pt-4 border-t border-border text-center">
-            <p className="text-xs text-text-muted/40 font-mono">
+          <div className="mt-8 pt-5 border-t border-border/60 text-center">
+            <p className="text-[10px] text-text-muted/50 font-mono">
               Powered by AI &middot; Scenari Immobiliari
             </p>
           </div>

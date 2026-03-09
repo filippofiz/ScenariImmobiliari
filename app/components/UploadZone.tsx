@@ -90,7 +90,6 @@ export default function UploadZone({ onUploadComplete }: Props) {
 
             setProgress(data)
 
-            // Log each event
             if (data.error) {
               addLog(`ERRORE: ${data.error}`)
               throw new Error(data.error)
@@ -172,8 +171,8 @@ export default function UploadZone({ onUploadComplete }: Props) {
           relative border-2 border-dashed rounded-xl p-6 text-center cursor-pointer
           transition-all duration-200
           ${isDragging
-            ? 'border-accent bg-accent/5 upload-active'
-            : 'border-border hover:border-accent/40 hover:bg-bg-card/50'
+            ? 'border-teal bg-teal/5 upload-active'
+            : 'border-border hover:border-teal/40 hover:bg-bg-elevated/50'
           }
           ${isUploading ? 'pointer-events-none opacity-60' : ''}
         `}
@@ -203,8 +202,8 @@ export default function UploadZone({ onUploadComplete }: Props) {
               d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
             />
           </svg>
-          <p className="text-sm text-text-muted">
-            Trascina il PDF qui o <span className="text-accent">sfoglia</span>
+          <p className="text-sm text-text-secondary">
+            Trascina il PDF qui o <span className="text-teal">sfoglia</span>
           </p>
           <p className="text-xs text-text-muted/60">
             Rapporto Fondi Immobiliari (.pdf)
@@ -214,13 +213,13 @@ export default function UploadZone({ onUploadComplete }: Props) {
 
       {progress && (
         <div className="space-y-2">
-          <div className="w-full bg-bg rounded-full h-1.5 overflow-hidden">
+          <div className="w-full bg-bg-elevated rounded-full h-1.5 overflow-hidden">
             <div
               className="progress-bar h-full rounded-full"
               style={{ width: `${progressPercent}%` }}
             />
           </div>
-          <p className={`text-xs font-mono ${progress.status === 'error' ? 'text-red-400' : 'text-text-muted'}`}>
+          <p className={`text-xs font-mono ${progress.status === 'error' ? 'text-danger' : 'text-text-muted'}`}>
             {statusText}
           </p>
         </div>
@@ -230,10 +229,10 @@ export default function UploadZone({ onUploadComplete }: Props) {
       {logs.length > 0 && (
         <div className="bg-bg border border-border rounded-xl overflow-hidden">
           <div className="flex items-center justify-between px-3 py-1.5 border-b border-border">
-            <span className="text-[11px] font-mono text-text-muted uppercase tracking-wider">Log</span>
+            <span className="text-[10px] font-mono text-text-muted uppercase tracking-[0.12em]">Log</span>
             <button
               onClick={() => setLogs([])}
-              className="text-[10px] font-mono text-text-muted/50 hover:text-text-muted transition-colors"
+              className="text-[9px] font-mono text-text-muted/50 hover:text-text-muted transition-colors uppercase tracking-wider"
             >
               Cancella
             </button>
@@ -244,9 +243,9 @@ export default function UploadZone({ onUploadComplete }: Props) {
                 key={i}
                 className={`text-[11px] font-mono leading-relaxed ${
                   log.includes('ERRORE')
-                    ? 'text-red-400'
+                    ? 'text-danger'
                     : log.includes('COMPLETATO')
-                    ? 'text-green-400'
+                    ? 'text-success'
                     : 'text-text-muted/70'
                 }`}
               >
