@@ -30,23 +30,20 @@ body {
 }
 
 .citation-badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 1px 7px;
-  margin: 0 2px;
-  background: rgba(78, 142, 167, 0.1);
-  border: 1px solid rgba(78, 142, 167, 0.25);
-  border-radius: 4px;
-  font-size: 0.7rem;
+  display: inline;
+  vertical-align: super;
+  font-size: 0.6rem;
   font-family: "IBM Plex Mono", monospace;
   color: #4e8ea7;
   cursor: pointer;
-  transition: all 0.2s;
+  letter-spacing: 0.02em;
   white-space: nowrap;
+  margin: 0 1px;
+  transition: color 0.15s;
 }
 .citation-badge:hover {
-  background: rgba(78, 142, 167, 0.18);
-  border-color: rgba(78, 142, 167, 0.4);
+  color: #CC0000;
+  text-decoration: underline;
 }
 
 @keyframes typing-blink {
@@ -186,17 +183,18 @@ textarea {
   text-align: left;
   padding: 8px 12px;
   font-family: "IBM Plex Mono", monospace;
-  font-size: 10px;
+  font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: #64748b;
+  color: #1f2937;
   font-weight: 500;
   white-space: nowrap;
 }
 .ai-stripe td {
   padding: 6px 12px;
   border-top: 1px solid #e2e8f0;
-  color: #374151;
+  color: #1a2332;
+  font-size: 13px;
   font-variant-numeric: tabular-nums;
 }
 .ai-stripe tbody tr:hover {

@@ -24,8 +24,8 @@ module.exports = {
         'brand-red': '#CC0000',
         text: {
           primary: '#1A2332',
-          secondary: '#374151',
-          muted: '#64748B',
+          secondary: '#1F2937',
+          muted: '#475569',
         },
         danger: '#E05252',
         success: '#22C55E',

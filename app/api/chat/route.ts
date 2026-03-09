@@ -194,6 +194,8 @@ export async function POST(request: NextRequest) {
           }
 
           // Claude is done — send response
+          console.log(`[chat] Final response - stop_reason: ${response.stop_reason}, content blocks: ${response.content.length}, types: ${response.content.map(b => b.type).join(',')}`)
+
           const citations = Array.from(allCitedPages).sort((a, b) => a - b).map(p => ({ page_number: p }))
           send({ type: 'citations', citations })
 
@@ -202,6 +204,11 @@ export async function POST(request: NextRequest) {
               finalText += block.text
               send({ type: 'text', text: block.text })
             }
+          }
+
+          // Safety: if no text was extracted, log warning
+          if (!finalText) {
+            console.warn('[chat] WARNING: No text blocks in final response. Content:', JSON.stringify(response.content.map(b => ({ type: b.type }))))
           }
           break
         }
@@ -234,7 +241,8 @@ export async function POST(request: NextRequest) {
 
         send({ type: 'done' })
       } catch (err) {
-        send({ type: 'error', error: String(err) })
+        console.error('[chat] Error in stream:', err)
+        send({ type: 'error', error: err instanceof Error ? err.message : String(err) })
       } finally {
         controller.close()
       }
