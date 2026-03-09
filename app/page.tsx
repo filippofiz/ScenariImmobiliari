@@ -293,6 +293,9 @@ function ThinkingLine() {
   )
 }
 
+// Cached PDF documents per document ID
+const pdfCache: Record<string, { doc: any; totalPages: number }> = {}
+
 function PdfPageViewer({ documentId, page, onClose, onPageChange }: {
   documentId: string
   page: number
@@ -302,43 +305,77 @@ function PdfPageViewer({ documentId, page, onClose, onPageChange }: {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const [loading, setLoading] = useState(true)
+  const [docLoading, setDocLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [scale, setScale] = useState(1)
+  const [totalPages, setTotalPages] = useState(0)
+  const [expanded, setExpanded] = useState(false)
+  const renderIdRef = useRef(0)
 
+  // Load the full PDF once and cache it
   useEffect(() => {
+    if (pdfCache[documentId]) {
+      setTotalPages(pdfCache[documentId].totalPages)
+      return
+    }
     let cancelled = false
+    setDocLoading(true)
+    const load = async () => {
+      try {
+        const pdfjs = await loadPdfjs()
+        const response = await fetch(`/api/pdf-page?document_id=${documentId}`)
+        if (!response.ok) throw new Error('Errore caricamento PDF')
+        const arrayBuffer = await response.arrayBuffer()
+        const doc = await pdfjs.getDocument({ data: arrayBuffer }).promise
+        if (!cancelled) {
+          pdfCache[documentId] = { doc, totalPages: doc.numPages }
+          setTotalPages(doc.numPages)
+          setDocLoading(false)
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : 'Errore')
+          setDocLoading(false)
+        }
+      }
+    }
+    load()
+    return () => { cancelled = true }
+  }, [documentId])
+
+  // Render a specific page from the cached doc
+  useEffect(() => {
+    const cached = pdfCache[documentId]
+    if (!cached) return
+
+    const currentRender = ++renderIdRef.current
     setLoading(true)
-    setError(null)
 
     const render = async () => {
       try {
-        const response = await fetch(`/api/pdf-page?document_id=${documentId}&page=${page}`)
-        if (!response.ok) throw new Error('Errore caricamento pagina')
-        const arrayBuffer = await response.arrayBuffer()
-        const pdfjs = await loadPdfjs()
-        const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise
-        const pdfPage = await pdf.getPage(1)
+        const clampedPage = Math.min(Math.max(1, page), cached.totalPages)
+        const pdfPage = await cached.doc.getPage(clampedPage)
 
-        if (cancelled) return
+        if (currentRender !== renderIdRef.current) return
 
         const canvas = canvasRef.current
         const container = containerRef.current
         if (!canvas || !container) return
 
-        // Fit to container width with some padding
-        const containerWidth = container.clientWidth - 32
+        const containerWidth = container.clientWidth - 24
         const viewport = pdfPage.getViewport({ scale: 1 })
         const fitScale = containerWidth / viewport.width
-        const scaledViewport = pdfPage.getViewport({ scale: fitScale * scale })
+        const renderScale = fitScale
+        const scaledViewport = pdfPage.getViewport({ scale: renderScale })
 
-        const dpr = window.devicePixelRatio || 1
-        canvas.width = scaledViewport.width * dpr
-        canvas.height = scaledViewport.height * dpr
+        // Render at 2x for sharpness, display at 1x
+        const renderDpr = 2
+        canvas.width = scaledViewport.width * renderDpr
+        canvas.height = scaledViewport.height * renderDpr
         canvas.style.width = `${scaledViewport.width}px`
         canvas.style.height = `${scaledViewport.height}px`
 
         const ctx = canvas.getContext('2d')!
-        ctx.scale(dpr, dpr)
+        ctx.scale(renderDpr, renderDpr)
 
         await pdfPage.render({
           canvasContext: ctx,
@@ -346,95 +383,112 @@ function PdfPageViewer({ documentId, page, onClose, onPageChange }: {
           canvas,
         } as any).promise
 
-        if (!cancelled) setLoading(false)
+        if (currentRender === renderIdRef.current) setLoading(false)
       } catch (err) {
-        if (!cancelled) {
+        if (currentRender === renderIdRef.current) {
           setError(err instanceof Error ? err.message : 'Errore')
           setLoading(false)
         }
       }
     }
     render()
-    return () => { cancelled = true }
-  }, [documentId, page, scale])
+  }, [documentId, page, totalPages, expanded])
 
+  const clampedPage = totalPages ? Math.min(Math.max(1, page), totalPages) : page
+
+  const header = (
+    <div className="h-11 flex items-center justify-between px-3 border-b border-border flex-shrink-0 bg-bg-card">
+      <div className="flex items-center gap-2">
+        <div className="w-5 h-5 rounded bg-teal/10 flex items-center justify-center">
+          <svg className="w-2.5 h-2.5 text-teal" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+          </svg>
+        </div>
+        <span className="text-[12px] font-mono text-text-primary">
+          {clampedPage}{totalPages ? ` / ${totalPages}` : ''}
+        </span>
+      </div>
+      <div className="flex items-center gap-0.5">
+        {/* Page nav */}
+        <button onClick={() => onPageChange(Math.max(1, clampedPage - 1))} disabled={clampedPage <= 1}
+          className="p-1 rounded text-text-muted hover:text-text-primary hover:bg-bg-elevated transition-colors disabled:opacity-20">
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+          </svg>
+        </button>
+        <button onClick={() => onPageChange(Math.min(totalPages || 999, clampedPage + 1))} disabled={!!totalPages && clampedPage >= totalPages}
+          className="p-1 rounded text-text-muted hover:text-text-primary hover:bg-bg-elevated transition-colors disabled:opacity-20">
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+          </svg>
+        </button>
+        <div className="w-px h-4 bg-border mx-1" />
+        {/* Expand */}
+        <button onClick={() => setExpanded(!expanded)}
+          className="p-1 rounded text-text-muted hover:text-text-primary hover:bg-bg-elevated transition-colors"
+          title={expanded ? 'Riduci' : 'Vista completa'}>
+          {expanded ? (
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 9V4.5M9 9H4.5M9 9L3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5l5.25 5.25" />
+            </svg>
+          ) : (
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" />
+            </svg>
+          )}
+        </button>
+        {/* Close */}
+        <button onClick={() => { if (expanded) setExpanded(false); else onClose() }}
+          className="p-1 rounded text-text-muted hover:text-text-primary hover:bg-bg-elevated transition-colors">
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+    </div>
+  )
+
+  const content = (
+    <div ref={containerRef} className="flex-1 overflow-auto flex justify-center items-start p-3">
+      {(loading || docLoading) && (
+        <div className="absolute inset-0 flex items-center justify-center z-10">
+          <div className="flex flex-col items-center gap-2">
+            <div className="w-5 h-5 border-2 border-teal/30 border-t-teal rounded-full animate-spin" />
+            <span className="text-[11px] font-mono text-text-muted">
+              {docLoading ? 'Caricamento documento...' : `p.${clampedPage}`}
+            </span>
+          </div>
+        </div>
+      )}
+      {error && (
+        <div className="flex items-center justify-center py-20">
+          <span className="text-[12px] font-mono text-danger">{error}</span>
+        </div>
+      )}
+      <canvas
+        ref={canvasRef}
+        className={`rounded shadow-lg shadow-black/20 transition-opacity duration-200 ${loading || docLoading ? 'opacity-0' : 'opacity-100'}`}
+        style={{ maxWidth: '100%' }}
+      />
+    </div>
+  )
+
+  // Expanded = full-screen modal
+  if (expanded) {
+    return (
+      <div className="fixed inset-0 z-50 bg-bg/98 backdrop-blur-xl flex flex-col animate-fade-in">
+        {header}
+        {content}
+      </div>
+    )
+  }
+
+  // Mobile = full screen overlay; Desktop = side panel
   return (
-    <div className="fixed inset-0 z-50 lg:relative lg:inset-auto lg:z-auto lg:flex lg:flex-col lg:w-[440px] lg:flex-shrink-0 lg:border-l lg:border-border bg-bg/95 backdrop-blur-xl lg:bg-bg-card lg:backdrop-blur-none animate-fade-in">
-      {/* Header */}
-      <div className="h-12 flex items-center justify-between px-4 border-b border-border flex-shrink-0 bg-bg-card/80 backdrop-blur-md">
-        <div className="flex items-center gap-2.5">
-          <div className="w-6 h-6 rounded-md bg-teal/10 flex items-center justify-center">
-            <svg className="w-3 h-3 text-teal" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
-            </svg>
-          </div>
-          <span className="text-[13px] font-mono text-text-primary tracking-wide">p. {page}</span>
-        </div>
-        <div className="flex items-center gap-0.5">
-          {/* Zoom controls */}
-          <button onClick={() => setScale(s => Math.max(0.5, s - 0.25))}
-            className="p-1.5 rounded-md text-text-muted hover:text-text-primary hover:bg-bg-elevated transition-colors"
-            title="Zoom out">
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 12h-15" />
-            </svg>
-          </button>
-          <span className="text-[10px] font-mono text-text-muted w-8 text-center">{Math.round(scale * 100)}%</span>
-          <button onClick={() => setScale(s => Math.min(3, s + 0.25))}
-            className="p-1.5 rounded-md text-text-muted hover:text-text-primary hover:bg-bg-elevated transition-colors"
-            title="Zoom in">
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-            </svg>
-          </button>
-          <div className="w-px h-4 bg-border mx-1" />
-          {/* Page navigation */}
-          <button onClick={() => onPageChange(Math.max(1, page - 1))}
-            className="p-1.5 rounded-md text-text-muted hover:text-text-primary hover:bg-bg-elevated transition-colors"
-            title="Pagina precedente">
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
-            </svg>
-          </button>
-          <button onClick={() => onPageChange(page + 1)}
-            className="p-1.5 rounded-md text-text-muted hover:text-text-primary hover:bg-bg-elevated transition-colors"
-            title="Pagina successiva">
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
-            </svg>
-          </button>
-          <div className="w-px h-4 bg-border mx-1" />
-          {/* Close */}
-          <button onClick={onClose}
-            className="p-1.5 rounded-md text-text-muted hover:text-text-primary hover:bg-bg-elevated transition-colors"
-            title="Chiudi">
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-      </div>
-      {/* Canvas area */}
-      <div ref={containerRef} className="flex-1 overflow-auto p-4 flex justify-center">
-        {loading && (
-          <div className="flex items-center justify-center py-20">
-            <div className="flex flex-col items-center gap-3">
-              <div className="w-5 h-5 border-2 border-teal/30 border-t-teal rounded-full animate-spin" />
-              <span className="text-[11px] font-mono text-text-muted">Caricamento p.{page}...</span>
-            </div>
-          </div>
-        )}
-        {error && (
-          <div className="flex items-center justify-center py-20">
-            <span className="text-[12px] font-mono text-danger">{error}</span>
-          </div>
-        )}
-        <canvas
-          ref={canvasRef}
-          className={`rounded-lg shadow-lg shadow-black/20 ${loading ? 'hidden' : ''}`}
-          style={{ maxWidth: '100%' }}
-        />
-      </div>
+    <div className="fixed inset-0 z-50 flex flex-col bg-bg/95 backdrop-blur-xl
+      lg:relative lg:inset-auto lg:z-auto lg:w-[440px] lg:flex-shrink-0 lg:border-l lg:border-border lg:bg-bg-card lg:backdrop-blur-none animate-fade-in">
+      {header}
+      {content}
     </div>
   )
 }

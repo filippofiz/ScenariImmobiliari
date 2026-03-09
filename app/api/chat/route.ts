@@ -141,76 +141,110 @@ export async function POST(request: NextRequest) {
         const allToolCalls: string[] = []
         let finalText = ''
 
-        while (loopCount < maxLoops) {
-          loopCount++
+        const TOOL_SYSTEM = SYSTEM_PROMPT + '\n\nHai a disposizione strumenti per cercare nel documento e visualizzare le pagine originali. Usa search_chunks per trovare informazioni testuali e view_pages per vedere grafici, tabelle e layout originali. Puoi usare gli strumenti più volte se la prima ricerca non è sufficiente. Quando hai raccolto abbastanza informazioni, rispondi all\'utente.'
+        const ANSWER_SYSTEM = SYSTEM_PROMPT + '\n\nRispondi all\'utente usando ESCLUSIVAMENTE le informazioni dai tool results nel contesto. NON menzionare MAI il processo di ricerca. Inizia DIRETTAMENTE con il contenuto informativo.'
 
-          // On last loop, don't give tools — force Claude to answer
-          const isLastLoop = loopCount === maxLoops
+        // Phase 1: Tool routing with Haiku (fast)
+        while (loopCount < maxLoops - 1) {
+          loopCount++
           const response = await anthropic.messages.create({
-            model: 'claude-sonnet-4-6',
-            max_tokens: 4096,
-            system: SYSTEM_PROMPT + '\n\nHai a disposizione strumenti per cercare nel documento e visualizzare le pagine originali. Usa search_chunks per trovare informazioni testuali e view_pages per vedere grafici, tabelle e layout originali. Puoi usare gli strumenti più volte se la prima ricerca non è sufficiente. Quando hai raccolto abbastanza informazioni, rispondi all\'utente.' + (isLastLoop ? '\n\nDEVI rispondere ORA con le informazioni raccolte. Non puoi più usare strumenti.' : ''),
-            tools: isLastLoop ? undefined : tools,
+            model: 'claude-haiku-4-5-20251001',
+            max_tokens: 1024,
+            system: TOOL_SYSTEM,
+            tools,
             messages,
           })
 
-          if (response.stop_reason === 'tool_use' && !isLastLoop) {
-            messages.push({ role: 'assistant', content: response.content })
+          if (response.stop_reason !== 'tool_use') break
 
-            const toolResults: Anthropic.Messages.ToolResultBlockParam[] = []
-            for (const block of response.content) {
-              if (block.type !== 'tool_use') continue
+          const toolBlocks = response.content.filter((b: any) => b.type === 'tool_use')
+          messages.push({ role: 'assistant', content: toolBlocks })
 
-              const toolLabel = block.name === 'search_chunks'
-                ? `Ricerca: "${(block.input as { query: string }).query}"`
-                : `Pagine: ${(block.input as { page_numbers: number[] }).page_numbers?.join(', ')}`
-              allToolCalls.push(toolLabel)
-              send({ type: 'tool_call', tool: block.name, input: block.input })
-
-              try {
-                if (block.name === 'search_chunks') {
-                  const input = block.input as { query: string; count?: number }
-                  const results = await searchChunks(input.query, input.count || 8, document_id)
-                  results.forEach((r: { page_number: number }) => allCitedPages.add(r.page_number))
-                  toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify(results) })
-                } else if (block.name === 'view_pages') {
-                  const input = block.input as { page_numbers: number[] }
-                  const pageContent = await viewPages(input.page_numbers, document_id)
-                  input.page_numbers.forEach(p => allCitedPages.add(p))
-                  toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: pageContent })
-                }
-              } catch (err) {
-                toolResults.push({
-                  type: 'tool_result',
-                  tool_use_id: block.id,
-                  is_error: true,
-                  content: `Errore: ${err instanceof Error ? err.message : String(err)}`,
-                })
-              }
-            }
-
-            messages.push({ role: 'user', content: toolResults })
-            continue
-          }
-
-          // Claude is done — send response
-          console.log(`[chat] Final response - stop_reason: ${response.stop_reason}, content blocks: ${response.content.length}, types: ${response.content.map(b => b.type).join(',')}`)
-
-          const citations = Array.from(allCitedPages).sort((a, b) => a - b).map(p => ({ page_number: p }))
-          send({ type: 'citations', citations })
-
+          const toolResults: Anthropic.Messages.ToolResultBlockParam[] = []
           for (const block of response.content) {
-            if (block.type === 'text') {
-              finalText += block.text
-              send({ type: 'text', text: block.text })
+            if (block.type !== 'tool_use') continue
+
+            const toolLabel = block.name === 'search_chunks'
+              ? `Ricerca: "${(block.input as { query: string }).query}"`
+              : `Pagine: ${(block.input as { page_numbers: number[] }).page_numbers?.join(', ')}`
+            allToolCalls.push(toolLabel)
+            send({ type: 'tool_call', tool: block.name, input: block.input })
+
+            try {
+              if (block.name === 'search_chunks') {
+                const input = block.input as { query: string; count?: number }
+                const results = await searchChunks(input.query, input.count || 8, document_id)
+                results.forEach((r: { page_number: number }) => allCitedPages.add(r.page_number))
+                toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify(results) })
+              } else if (block.name === 'view_pages') {
+                const input = block.input as { page_numbers: number[] }
+                const pageContent = await viewPages(input.page_numbers, document_id)
+                input.page_numbers.forEach(p => allCitedPages.add(p))
+                toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: pageContent })
+              }
+            } catch (err) {
+              toolResults.push({
+                type: 'tool_result',
+                tool_use_id: block.id,
+                is_error: true,
+                content: `Errore: ${err instanceof Error ? err.message : String(err)}`,
+              })
             }
           }
 
-          // Safety: if no text was extracted, log warning
-          if (!finalText) {
-            console.warn('[chat] WARNING: No text blocks in final response. Content:', JSON.stringify(response.content.map(b => ({ type: b.type }))))
+          messages.push({ role: 'user', content: toolResults })
+        }
+
+        // Phase 2: Final answer with Sonnet (streaming)
+        const citations = Array.from(allCitedPages).sort((a, b) => a - b).map(p => ({ page_number: p }))
+        send({ type: 'citations', citations })
+
+        {
+          const stream = anthropic.messages.stream({
+            model: 'claude-sonnet-4-6',
+            max_tokens: 4096,
+            system: ANSWER_SYSTEM,
+            messages,
+          })
+
+          let rawText = ''
+          let preambleStripped = false
+
+          stream.on('text', (delta) => {
+            rawText += delta
+            // Buffer until we can detect/strip preamble, then stream
+            if (!preambleStripped) {
+              // Check if we have enough to strip preamble
+              const hrMatch = rawText.match(/^(.{0,300}?)\n---\n/)
+              if (hrMatch) {
+                rawText = rawText.slice(hrMatch[0].length)
+                preambleStripped = true
+                if (rawText) send({ type: 'text', text: rawText })
+              } else if (rawText.length > 350 || rawText.includes('\n\n')) {
+                // No hr found, strip leading preamble sentence
+                rawText = rawText.replace(/^(Ora ho|Ho raccolto|Ho trovato|Ho analizzato|Le informazioni|I dati sono|La risposta|Ecco la|Basandomi|In base|Dalle ricerche|Dopo aver|Analizzando|Procedo|Vediamo|Di seguito|Fornisco|Presento)[^\n]*\n+/i, '')
+                preambleStripped = true
+                if (rawText) send({ type: 'text', text: rawText })
+              }
+            } else {
+              // Already stripped, stream delta directly
+              send({ type: 'text', text: delta })
+            }
+          })
+
+          const finalMsg = await stream.finalMessage()
+
+          // If preamble was never stripped (short response), send now
+          if (!preambleStripped) {
+            rawText = rawText.replace(/^(Ora ho|Ho raccolto|Ho trovato|Ho analizzato|Le informazioni|I dati sono|La risposta|Ecco la|Basandomi|In base|Dalle ricerche|Dopo aver|Analizzando|Procedo|Vediamo|Di seguito|Fornisco|Presento)[^\n]*\n+/i, '')
+            const hrMatch = rawText.match(/^(.{0,300}?)\n---\n/)
+            if (hrMatch) rawText = rawText.slice(hrMatch[0].length)
+            rawText = rawText.trim()
+            if (rawText) send({ type: 'text', text: rawText })
           }
-          break
+
+          finalText = rawText
+          console.log(`[chat] Streamed ${finalText.length} chars, stop: ${finalMsg.stop_reason}`)
         }
 
         // Save assistant message if conversation exists
