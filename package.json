@@ -1,0 +1,25 @@
+{
+  "name": "rag-immobiliare",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.78.0",
+    "@supabase/supabase-js": "^2.99.0",
+    "@types/node": "^25.3.5",
+    "@types/react": "^19.2.14",
+    "ai": "^6.0.116",
+    "autoprefixer": "^10.4.27",
+    "next": "^14.2.35",
+    "postcss": "^8.5.8",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tailwindcss": "^3.4.19",
+    "typescript": "^5.9.3"
+  }
+}
