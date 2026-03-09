@@ -117,6 +117,7 @@ export async function POST(request: NextRequest) {
       }
 
       try {
+        console.log(`[chat] START message="${message.slice(0,50)}" doc=${document_id} conv=${conversation_id}`)
         const recentHistory = history.slice(-10)
         const messages: Anthropic.Messages.MessageParam[] = [
           ...recentHistory.map(m => ({
@@ -144,9 +145,10 @@ export async function POST(request: NextRequest) {
         const TOOL_SYSTEM = SYSTEM_PROMPT + '\n\nHai a disposizione strumenti per cercare nel documento e visualizzare le pagine originali. Usa search_chunks per trovare informazioni testuali e view_pages per vedere grafici, tabelle e layout originali. Puoi usare gli strumenti più volte se la prima ricerca non è sufficiente. Quando hai raccolto abbastanza informazioni, rispondi all\'utente.'
         const ANSWER_SYSTEM = SYSTEM_PROMPT + '\n\nRispondi all\'utente usando ESCLUSIVAMENTE le informazioni dai tool results nel contesto. NON menzionare MAI il processo di ricerca. Inizia DIRETTAMENTE con il contenuto informativo.'
 
-        // Phase 1: Tool routing with Haiku (fast)
+        // Phase 1: Tool routing (non-streaming)
         while (loopCount < maxLoops - 1) {
           loopCount++
+          console.log(`[chat] Tool loop ${loopCount}/${maxLoops - 1}`)
           const response = await getAnthropic().messages.create({
             model: 'claude-sonnet-4-6',
             max_tokens: 1024,
@@ -154,8 +156,12 @@ export async function POST(request: NextRequest) {
             tools,
             messages,
           })
+          console.log(`[chat] Loop ${loopCount} stop_reason=${response.stop_reason} blocks=${response.content.length}`)
 
-          if (response.stop_reason !== 'tool_use') break
+          if (response.stop_reason !== 'tool_use') {
+            console.log(`[chat] No more tools, moving to answer phase`)
+            break
+          }
 
           const toolBlocks = response.content.filter((b: any) => b.type === 'tool_use')
           messages.push({ role: 'assistant', content: toolBlocks })
@@ -173,7 +179,9 @@ export async function POST(request: NextRequest) {
             try {
               if (block.name === 'search_chunks') {
                 const input = block.input as { query: string; count?: number }
+                console.log(`[chat] search_chunks query="${input.query}" count=${input.count || 8}`)
                 const results = await searchChunks(input.query, input.count || 8, document_id)
+                console.log(`[chat] search_chunks returned ${results.length} results`)
                 results.forEach((r: { page_number: number }) => allCitedPages.add(r.page_number))
                 toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify(results) })
               } else if (block.name === 'view_pages') {
@@ -183,6 +191,7 @@ export async function POST(request: NextRequest) {
                 toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: pageContent })
               }
             } catch (err) {
+              console.error(`[chat] Tool error:`, err)
               toolResults.push({
                 type: 'tool_result',
                 tool_use_id: block.id,
@@ -195,11 +204,21 @@ export async function POST(request: NextRequest) {
           messages.push({ role: 'user', content: toolResults })
         }
 
+        // If last message is tool_result, Claude expects to continue with tools.
+        // Add a nudge so Phase 2 (no tools) answers with what was found.
+        const lastMsg = messages[messages.length - 1]
+        if (lastMsg.role === 'user' && Array.isArray(lastMsg.content)) {
+          messages.push({ role: 'assistant', content: 'Ho tutte le informazioni necessarie dai risultati delle ricerche precedenti. Rispondo ora direttamente alla domanda dell\'utente.' })
+          messages.push({ role: 'user', content: 'Perfetto, rispondi ora alla domanda originale usando SOLO i dati già raccolti dai tool results. Ignora eventuali errori di ricerca, usa i risultati che hai ottenuto con successo.' })
+        }
+
         // Phase 2: Final answer with Sonnet (streaming)
+        console.log(`[chat] Phase 2: streaming answer. Tool loops used: ${loopCount}, cited pages: ${allCitedPages.size}`)
         const citations = Array.from(allCitedPages).sort((a, b) => a - b).map(p => ({ page_number: p }))
         send({ type: 'citations', citations })
 
         {
+          console.log(`[chat] Starting stream with ${messages.length} messages`)
           const stream = getAnthropic().messages.stream({
             model: 'claude-sonnet-4-6',
             max_tokens: 4096,
@@ -247,7 +266,7 @@ export async function POST(request: NextRequest) {
 
         send({ type: 'done' })
       } catch (err) {
-        console.error('[chat] Error in stream:', err)
+        console.error('[chat] FATAL error in stream:', err)
         send({ type: 'error', error: err instanceof Error ? err.message : String(err) })
       } finally {
         controller.close()
