@@ -20,7 +20,15 @@ export default function UploadZone({ onUploadComplete }: Props) {
   const [isDragging, setIsDragging] = useState(false)
   const [progress, setProgress] = useState<UploadProgress | null>(null)
   const [isUploading, setIsUploading] = useState(false)
+  const [logs, setLogs] = useState<string[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const logsEndRef = useRef<HTMLDivElement>(null)
+
+  const addLog = (msg: string) => {
+    const ts = new Date().toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    setLogs(prev => [...prev, `[${ts}] ${msg}`])
+    setTimeout(() => logsEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50)
+  }
 
   const handleUpload = useCallback(async (file: File) => {
     if (!file.name.endsWith('.pdf')) {
@@ -29,7 +37,10 @@ export default function UploadZone({ onUploadComplete }: Props) {
     }
 
     setIsUploading(true)
+    setLogs([])
     setProgress({ status: 'uploading' })
+    addLog(`File selezionato: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`)
+    addLog('Invio file al server...')
 
     try {
       const formData = new FormData()
@@ -40,14 +51,27 @@ export default function UploadZone({ onUploadComplete }: Props) {
         body: formData,
       })
 
+      addLog(`Risposta server: HTTP ${response.status}`)
+
+      if (!response.ok) {
+        const text = await response.text()
+        addLog(`ERRORE: ${text}`)
+        throw new Error(`HTTP ${response.status}: ${text}`)
+      }
+
       const reader = response.body?.getReader()
       const decoder = new TextDecoder()
       if (!reader) throw new Error('No response stream')
 
+      addLog('Stream SSE connesso, in attesa di eventi...')
+
       let buffer = ''
       while (true) {
         const { done, value } = await reader.read()
-        if (done) break
+        if (done) {
+          addLog('Stream terminato')
+          break
+        }
 
         buffer += decoder.decode(value, { stream: true })
         const lines = buffer.split('\n\n')
@@ -55,29 +79,56 @@ export default function UploadZone({ onUploadComplete }: Props) {
 
         for (const line of lines) {
           if (line.startsWith('data: ')) {
-            const data = JSON.parse(line.slice(6)) as UploadProgress
-            setProgress(data)
-
-            if (data.status === 'complete' && data.document_id) {
-              onUploadComplete(
-                data.document_id,
-                file.name,
-                data.pages_processed || 0,
-                data.total_chunks || 0
-              )
+            const raw = line.slice(6)
+            let data: UploadProgress
+            try {
+              data = JSON.parse(raw) as UploadProgress
+            } catch {
+              addLog(`Evento non parsabile: ${raw}`)
+              continue
             }
 
+            setProgress(data)
+
+            // Log each event
             if (data.error) {
+              addLog(`ERRORE: ${data.error}`)
               throw new Error(data.error)
+            } else if (data.status === 'started') {
+              addLog('Elaborazione avviata')
+            } else if (data.status === 'pdf_stored') {
+              addLog('PDF salvato in Supabase Storage')
+            } else if (data.status === 'parsed') {
+              addLog(`Testo estratto: ${data.total_pages} pagine trovate`)
+            } else if (data.status === 'document_created') {
+              addLog(`Documento creato: ${data.document_id}`)
+            } else if (data.status === 'chunked') {
+              addLog(`Chunking completato: ${data.total_chunks} frammenti da ${data.total_pages} pagine`)
+            } else if (data.status === 'rate_limited') {
+              addLog(`Rate limit raggiunto, attesa ${(data as unknown as Record<string,number>).wait_seconds}s (tentativo ${(data as unknown as Record<string,number>).attempt})...`)
+            } else if (data.status === 'embedding') {
+              const d = data as unknown as Record<string, number>
+              addLog(`Embedding: ${data.chunks_embedded}/${data.total_chunks} frammenti (batch ${d.batch}/${d.total_batches}, ~${d.eta_minutes} min rimasti)`)
+            } else if (data.status === 'complete') {
+              addLog(`COMPLETATO: ${data.total_chunks} frammenti indicizzati da ${data.pages_processed} pagine`)
+              if (data.document_id) {
+                onUploadComplete(
+                  data.document_id,
+                  file.name,
+                  data.pages_processed || 0,
+                  data.total_chunks || 0
+                )
+              }
+            } else {
+              addLog(`Evento: ${JSON.stringify(data)}`)
             }
           }
         }
       }
     } catch (err) {
-      setProgress({
-        status: 'error',
-        error: err instanceof Error ? err.message : 'Errore sconosciuto',
-      })
+      const msg = err instanceof Error ? err.message : 'Errore sconosciuto'
+      addLog(`ERRORE FATALE: ${msg}`)
+      setProgress({ status: 'error', error: msg })
     } finally {
       setIsUploading(false)
     }
@@ -103,7 +154,11 @@ export default function UploadZone({ onUploadComplete }: Props) {
       case 'parsed': return `Testo estratto da ${progress.total_pages} pagine`
       case 'document_created': return 'Documento registrato...'
       case 'chunked': return `${progress.total_chunks} frammenti creati da ${progress.total_pages} pagine`
-      case 'embedding': return `Indicizzazione ${progress.chunks_embedded || 0} di ${progress.total_chunks} frammenti...`
+      case 'rate_limited': return `Rate limit, attesa...`
+      case 'embedding': {
+        const p = progress as unknown as Record<string, number>
+        return `Indicizzazione ${progress.chunks_embedded || 0}/${progress.total_chunks} (batch ${p.batch || '?'}/${p.total_batches || '?'}, ~${p.eta_minutes || '?'} min)`
+      }
       case 'complete': return `Completato! ${progress.total_chunks} frammenti indicizzati.`
       case 'error': return `Errore: ${progress.error}`
       default: return progress.status
@@ -168,6 +223,38 @@ export default function UploadZone({ onUploadComplete }: Props) {
           <p className={`text-xs font-mono ${progress.status === 'error' ? 'text-red-400' : 'text-text-muted'}`}>
             {statusText}
           </p>
+        </div>
+      )}
+
+      {/* Log panel */}
+      {logs.length > 0 && (
+        <div className="bg-bg border border-border rounded-xl overflow-hidden">
+          <div className="flex items-center justify-between px-3 py-1.5 border-b border-border">
+            <span className="text-[11px] font-mono text-text-muted uppercase tracking-wider">Log</span>
+            <button
+              onClick={() => setLogs([])}
+              className="text-[10px] font-mono text-text-muted/50 hover:text-text-muted transition-colors"
+            >
+              Cancella
+            </button>
+          </div>
+          <div className="max-h-48 overflow-y-auto p-2 space-y-0.5">
+            {logs.map((log, i) => (
+              <p
+                key={i}
+                className={`text-[11px] font-mono leading-relaxed ${
+                  log.includes('ERRORE')
+                    ? 'text-red-400'
+                    : log.includes('COMPLETATO')
+                    ? 'text-green-400'
+                    : 'text-text-muted/70'
+                }`}
+              >
+                {log}
+              </p>
+            ))}
+            <div ref={logsEndRef} />
+          </div>
         </div>
       )}
     </div>

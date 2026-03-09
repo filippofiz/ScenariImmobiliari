@@ -117,9 +117,26 @@ export default function AdminPage() {
                       </p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full bg-green-400" />
-                    <span className="text-xs text-text-muted font-mono">Attivo</span>
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2">
+                      <div className="w-2 h-2 rounded-full bg-green-400" />
+                      <span className="text-xs text-text-muted font-mono">Attivo</span>
+                    </div>
+                    <button
+                      onClick={async (e) => {
+                        e.stopPropagation()
+                        if (!confirm(`Eliminare "${doc.filename}" e tutti i suoi ${doc.chunks} chunks?`)) return
+                        await fetch('/api/documents', {
+                          method: 'DELETE',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ id: doc.id }),
+                        })
+                        loadDocuments()
+                      }}
+                      className="text-xs text-red-400/60 hover:text-red-400 font-mono transition-colors"
+                    >
+                      Elimina
+                    </button>
                   </div>
                 </div>
               ))}

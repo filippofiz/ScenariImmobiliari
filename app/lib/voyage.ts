@@ -8,7 +8,7 @@ export async function getEmbedding(text: string): Promise<number[]> {
       'Authorization': `Bearer ${process.env.VOYAGE_API_KEY}`,
     },
     body: JSON.stringify({
-      model: 'voyage-2',
+      model: 'voyage-4-lite',
       input: text,
       input_type: 'document',
     }),
@@ -26,7 +26,7 @@ export async function getEmbeddings(texts: string[]): Promise<number[][]> {
       'Authorization': `Bearer ${process.env.VOYAGE_API_KEY}`,
     },
     body: JSON.stringify({
-      model: 'voyage-2',
+      model: 'voyage-4-lite',
       input: texts,
       input_type: 'document',
     }),
@@ -44,7 +44,7 @@ export async function getQueryEmbedding(text: string): Promise<number[]> {
       'Authorization': `Bearer ${process.env.VOYAGE_API_KEY}`,
     },
     body: JSON.stringify({
-      model: 'voyage-2',
+      model: 'voyage-4-lite',
       input: text,
       input_type: 'query',
     }),
