@@ -50,7 +50,7 @@ const tools: Anthropic.Messages.Tool[] = [
 
 async function searchChunks(query: string, count: number, documentId: string) {
   const embedding = await getQueryEmbedding(query)
-  const { data: chunks, error } = await supabaseAdmin.rpc('match_chunks', {
+  const { data: chunks, error } = await supabaseAdmin().rpc('match_chunks', {
     query_embedding: JSON.stringify(embedding),
     match_count: Math.min(count, 15),
     doc_id: documentId,
@@ -64,14 +64,14 @@ async function searchChunks(query: string, count: number, documentId: string) {
 }
 
 async function viewPages(pageNumbers: number[], documentId: string): Promise<Anthropic.Messages.ToolResultBlockParam['content']> {
-  const { data: doc } = await supabaseAdmin
+  const { data: doc } = await supabaseAdmin()
     .from('documents')
     .select('pdf_path')
     .eq('id', documentId)
     .single()
   if (!doc?.pdf_path) throw new Error('PDF non trovato')
 
-  const { data: pdfData, error } = await supabaseAdmin.storage.from('pdfs').download(doc.pdf_path)
+  const { data: pdfData, error } = await supabaseAdmin().storage.from('pdfs').download(doc.pdf_path)
   if (error || !pdfData) throw new Error('Errore download PDF')
 
   const pdfBytes = await pdfData.arrayBuffer()
@@ -128,7 +128,7 @@ export async function POST(request: NextRequest) {
 
         // Save user message if conversation exists
         if (conversation_id) {
-          await supabaseAdmin.from('messages').insert({
+          await supabaseAdmin().from('messages').insert({
             conversation_id,
             role: 'user',
             content: message,
@@ -249,7 +249,7 @@ export async function POST(request: NextRequest) {
 
         // Save assistant message if conversation exists
         if (conversation_id && finalText) {
-          await supabaseAdmin.from('messages').insert({
+          await supabaseAdmin().from('messages').insert({
             conversation_id,
             role: 'assistant',
             content: finalText,
@@ -258,14 +258,14 @@ export async function POST(request: NextRequest) {
           })
 
           // Auto-title: if this is the first exchange, use Claude to generate title
-          const { count } = await supabaseAdmin
+          const { count } = await supabaseAdmin()
             .from('messages')
             .select('*', { count: 'exact', head: true })
             .eq('conversation_id', conversation_id)
 
           if (count && count <= 2) {
             const title = message.length > 60 ? message.slice(0, 57) + '...' : message
-            await supabaseAdmin
+            await supabaseAdmin()
               .from('conversations')
               .update({ title })
               .eq('id', conversation_id)

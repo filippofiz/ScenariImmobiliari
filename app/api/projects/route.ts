@@ -3,7 +3,7 @@ import { supabaseAdmin } from '@/app/lib/supabase'
 
 // GET: list projects
 export async function GET() {
-  const { data, error } = await supabaseAdmin
+  const { data, error } = await supabaseAdmin()
     .from('projects')
     .select('*')
     .eq('is_archived', false)
@@ -17,7 +17,7 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   const { name, emoji, color, description } = await request.json()
 
-  const { data, error } = await supabaseAdmin
+  const { data, error } = await supabaseAdmin()
     .from('projects')
     .insert({
       name: name || 'Nuovo Progetto',
@@ -37,7 +37,7 @@ export async function PATCH(request: NextRequest) {
   const { id, ...updates } = await request.json()
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
 
-  const { data, error } = await supabaseAdmin
+  const { data, error } = await supabaseAdmin()
     .from('projects')
     .update({ ...updates, updated_at: new Date().toISOString() })
     .eq('id', id)
@@ -53,6 +53,6 @@ export async function DELETE(request: NextRequest) {
   const { id } = await request.json()
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
 
-  await supabaseAdmin.from('projects').delete().eq('id', id)
+  await supabaseAdmin().from('projects').delete().eq('id', id)
   return NextResponse.json({ ok: true })
 }

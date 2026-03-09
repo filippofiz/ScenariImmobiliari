@@ -85,7 +85,7 @@ export async function POST(request: NextRequest) {
 
         // 1. Store raw PDF in Supabase Storage
         const pdfPath = `${crypto.randomUUID()}/${file.name}`
-        const { error: uploadError } = await supabaseAdmin.storage
+        const { error: uploadError } = await supabaseAdmin().storage
           .from('pdfs')
           .upload(pdfPath, buffer, { contentType: 'application/pdf' })
 
@@ -126,7 +126,7 @@ export async function POST(request: NextRequest) {
         send({ status: 'parsed', total_pages: totalPages })
 
         // 3. Create document record
-        const { data: doc, error: docError } = await supabaseAdmin
+        const { data: doc, error: docError } = await supabaseAdmin()
           .from('documents')
           .insert({ filename: file.name, pdf_path: pdfPath })
           .select('id')
@@ -197,7 +197,7 @@ export async function POST(request: NextRequest) {
             embedding: JSON.stringify(embeddings![j]),
           }))
 
-          const { error: insertError } = await supabaseAdmin
+          const { error: insertError } = await supabaseAdmin()
             .from('chunks')
             .insert(rows)
 

@@ -9,7 +9,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'document_id is required' }, { status: 400 })
   }
 
-  const { data: doc, error: docError } = await supabaseAdmin
+  const { data: doc, error: docError } = await supabaseAdmin()
     .from('documents')
     .select('pdf_path')
     .eq('id', documentId)
@@ -19,7 +19,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Documento non trovato' }, { status: 404 })
   }
 
-  const { data: pdfData, error: downloadError } = await supabaseAdmin.storage
+  const { data: pdfData, error: downloadError } = await supabaseAdmin().storage
     .from('pdfs')
     .download(doc.pdf_path)
 

@@ -6,7 +6,7 @@ export async function GET(request: NextRequest) {
   const convId = request.nextUrl.searchParams.get('conversation_id')
   if (!convId) return NextResponse.json({ error: 'conversation_id required' }, { status: 400 })
 
-  const { data, error } = await supabaseAdmin
+  const { data, error } = await supabaseAdmin()
     .from('messages')
     .select('id, role, content, citations, tool_calls, created_at')
     .eq('conversation_id', convId)
@@ -20,7 +20,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   const { conversation_id, role, content, citations, tool_calls } = await request.json()
 
-  const { data, error } = await supabaseAdmin
+  const { data, error } = await supabaseAdmin()
     .from('messages')
     .insert({
       conversation_id,
@@ -35,7 +35,7 @@ export async function POST(request: NextRequest) {
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
   // Update conversation timestamp and auto-title
-  await supabaseAdmin
+  await supabaseAdmin()
     .from('conversations')
     .update({ updated_at: new Date().toISOString() })
     .eq('id', conversation_id)
