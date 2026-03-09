@@ -208,41 +208,13 @@ export async function POST(request: NextRequest) {
           })
 
           let rawText = ''
-          let preambleStripped = false
 
           stream.on('text', (delta) => {
             rawText += delta
-            // Buffer until we can detect/strip preamble, then stream
-            if (!preambleStripped) {
-              // Check if we have enough to strip preamble
-              const hrMatch = rawText.match(/^(.{0,300}?)\n---\n/)
-              if (hrMatch) {
-                rawText = rawText.slice(hrMatch[0].length)
-                preambleStripped = true
-                if (rawText) send({ type: 'text', text: rawText })
-              } else if (rawText.length > 350 || rawText.includes('\n\n')) {
-                // No hr found, strip leading preamble sentence
-                rawText = rawText.replace(/^(Ora ho|Ho raccolto|Ho trovato|Ho analizzato|Le informazioni|I dati sono|La risposta|Ecco la|Basandomi|In base|Dalle ricerche|Dopo aver|Analizzando|Procedo|Vediamo|Di seguito|Fornisco|Presento)[^\n]*\n+/i, '')
-                preambleStripped = true
-                if (rawText) send({ type: 'text', text: rawText })
-              }
-            } else {
-              // Already stripped, stream delta directly
-              send({ type: 'text', text: delta })
-            }
+            send({ type: 'text', text: delta })
           })
 
           const finalMsg = await stream.finalMessage()
-
-          // If preamble was never stripped (short response), send now
-          if (!preambleStripped) {
-            rawText = rawText.replace(/^(Ora ho|Ho raccolto|Ho trovato|Ho analizzato|Le informazioni|I dati sono|La risposta|Ecco la|Basandomi|In base|Dalle ricerche|Dopo aver|Analizzando|Procedo|Vediamo|Di seguito|Fornisco|Presento)[^\n]*\n+/i, '')
-            const hrMatch = rawText.match(/^(.{0,300}?)\n---\n/)
-            if (hrMatch) rawText = rawText.slice(hrMatch[0].length)
-            rawText = rawText.trim()
-            if (rawText) send({ type: 'text', text: rawText })
-          }
-
           finalText = rawText
           console.log(`[chat] Streamed ${finalText.length} chars, stop: ${finalMsg.stop_reason}`)
         }
