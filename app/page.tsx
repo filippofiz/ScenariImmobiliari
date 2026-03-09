@@ -2,19 +2,16 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import CitationCard from './components/CitationCard'
 
 interface Citation {
   page_number: number
-  excerpt: string
-  chunk_id: string
-  similarity: number
 }
 
 interface Message {
   role: 'user' | 'assistant'
   content: string
   citations?: Citation[]
+  toolCalls?: string[]
 }
 
 interface DocInfo {
@@ -91,7 +88,16 @@ export default function ClientChat() {
 
       let assistantText = ''
       let citations: Citation[] = []
-      setMessages(prev => [...prev, { role: 'assistant', content: '', citations: [] }])
+      let currentToolCalls: string[] = []
+      setMessages(prev => [...prev, { role: 'assistant', content: '', citations: [], toolCalls: [] }])
+
+      const updateMessage = () => {
+        setMessages(prev => {
+          const u = [...prev]
+          u[u.length - 1] = { role: 'assistant', content: assistantText, citations, toolCalls: [...currentToolCalls] }
+          return u
+        })
+      }
 
       let buffer = ''
       while (true) {
@@ -104,23 +110,23 @@ export default function ClientChat() {
         for (const line of lines) {
           if (!line.startsWith('data: ')) continue
           const data = JSON.parse(line.slice(6))
-          if (data.type === 'citations') citations = data.citations
-          else if (data.type === 'text') {
+          if (data.type === 'citations') {
+            citations = data.citations
+            updateMessage()
+          } else if (data.type === 'tool_call') {
+            const label = data.tool === 'search_chunks'
+              ? `Ricerca: "${data.input.query}"`
+              : `Visualizzazione pagine: ${data.input.page_numbers?.join(', ')}`
+            currentToolCalls.push(label)
+            updateMessage()
+          } else if (data.type === 'text') {
             assistantText += data.text
-            setMessages(prev => {
-              const u = [...prev]
-              u[u.length - 1] = { role: 'assistant', content: assistantText, citations }
-              return u
-            })
+            updateMessage()
           }
         }
       }
 
-      setMessages(prev => {
-        const u = [...prev]
-        u[u.length - 1] = { role: 'assistant', content: assistantText, citations }
-        return u
-      })
+      updateMessage()
     } catch (err) {
       setMessages(prev => [
         ...prev.filter(m => m.content !== ''),
@@ -272,12 +278,30 @@ export default function ClientChat() {
                       {msg.role === 'assistant' ? renderText(msg.content) : msg.content}
                     </div>
 
-                    {msg.citations && msg.citations.length > 0 && (
-                      <div className="mt-3 pt-3 border-t border-border/40 space-y-1.5">
-                        <p className="text-[11px] text-text-muted font-mono uppercase tracking-wider mb-1">Fonti</p>
-                        {msg.citations.map((c, j) => (
-                          <CitationCard key={j} citation={c} />
+                    {/* Tool calls activity */}
+                    {msg.toolCalls && msg.toolCalls.length > 0 && (
+                      <div className="mt-3 pt-3 border-t border-border/40 space-y-1">
+                        <p className="text-[11px] text-text-muted font-mono uppercase tracking-wider mb-1">Analisi effettuata</p>
+                        {msg.toolCalls.map((tc, j) => (
+                          <div key={j} className="flex items-center gap-2 text-xs text-text-muted">
+                            <svg className="w-3 h-3 text-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                            </svg>
+                            <span className="font-mono truncate">{tc}</span>
+                          </div>
                         ))}
+                      </div>
+                    )}
+
+                    {/* Page citations */}
+                    {msg.citations && msg.citations.length > 0 && (
+                      <div className="mt-2 pt-2 border-t border-border/40">
+                        <div className="flex flex-wrap gap-1.5">
+                          <span className="text-[11px] text-text-muted font-mono">Pagine consultate:</span>
+                          {msg.citations.map((c, j) => (
+                            <span key={j} className="citation-badge">p.{c.page_number}</span>
+                          ))}
+                        </div>
                       </div>
                     )}
                   </div>

@@ -6,7 +6,6 @@ interface UploadProgress {
   status: string
   pages_processed?: number
   total_pages?: number
-  chunks_so_far?: number
   chunks_embedded?: number
   total_chunks?: number
   document_id?: string
@@ -23,34 +22,6 @@ export default function UploadZone({ onUploadComplete }: Props) {
   const [isUploading, setIsUploading] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const renderPdfPages = useCallback(async (file: File): Promise<string[]> => {
-    // We load PDF.js from CDN to render pages as images
-    const pdfjsLib = await loadPdfJs()
-    const arrayBuffer = await file.arrayBuffer()
-    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise
-    const pages: string[] = []
-
-    for (let i = 1; i <= pdf.numPages; i++) {
-      const page = await pdf.getPage(i)
-      const viewport = page.getViewport({ scale: 2.0 })
-      const canvas = document.createElement('canvas')
-      canvas.width = viewport.width
-      canvas.height = viewport.height
-      const ctx = canvas.getContext('2d')!
-      await page.render({ canvasContext: ctx, viewport }).promise
-      // Get base64 without the data:image/png;base64, prefix
-      const dataUrl = canvas.toDataURL('image/png')
-      pages.push(dataUrl.split(',')[1])
-      setProgress({
-        status: 'rendering',
-        pages_processed: i,
-        total_pages: pdf.numPages,
-      })
-    }
-
-    return pages
-  }, [])
-
   const handleUpload = useCallback(async (file: File) => {
     if (!file.name.endsWith('.pdf')) {
       alert('Seleziona un file PDF')
@@ -58,18 +29,11 @@ export default function UploadZone({ onUploadComplete }: Props) {
     }
 
     setIsUploading(true)
-    setProgress({ status: 'rendering', pages_processed: 0, total_pages: 0 })
+    setProgress({ status: 'uploading' })
 
     try {
-      // Render PDF pages to images client-side
-      const pages = await renderPdfPages(file)
-
-      setProgress({ status: 'uploading', total_pages: pages.length })
-
-      // Send to API
       const formData = new FormData()
       formData.append('file', file)
-      formData.append('pages', JSON.stringify(pages))
 
       const response = await fetch('/api/ingest', {
         method: 'POST',
@@ -78,7 +42,6 @@ export default function UploadZone({ onUploadComplete }: Props) {
 
       const reader = response.body?.getReader()
       const decoder = new TextDecoder()
-
       if (!reader) throw new Error('No response stream')
 
       let buffer = ''
@@ -118,18 +81,15 @@ export default function UploadZone({ onUploadComplete }: Props) {
     } finally {
       setIsUploading(false)
     }
-  }, [onUploadComplete, renderPdfPages])
+  }, [onUploadComplete])
 
   const progressPercent = (() => {
     if (!progress) return 0
-    if (progress.status === 'rendering' && progress.total_pages) {
-      return ((progress.pages_processed || 0) / progress.total_pages) * 30
-    }
-    if (progress.status === 'processing' && progress.total_pages) {
-      return 30 + ((progress.pages_processed || 0) / progress.total_pages) * 40
-    }
+    if (progress.status === 'uploading') return 5
+    if (progress.status === 'parsed') return 15
+    if (progress.status === 'chunked') return 25
     if (progress.status === 'embedding' && progress.total_chunks) {
-      return 70 + ((progress.chunks_embedded || 0) / progress.total_chunks) * 30
+      return 25 + ((progress.chunks_embedded || 0) / progress.total_chunks) * 75
     }
     if (progress.status === 'complete') return 100
     return 0
@@ -138,24 +98,15 @@ export default function UploadZone({ onUploadComplete }: Props) {
   const statusText = (() => {
     if (!progress) return ''
     switch (progress.status) {
-      case 'rendering':
-        return `Rendering pagina ${progress.pages_processed} di ${progress.total_pages}...`
-      case 'uploading':
-        return 'Invio al server...'
-      case 'started':
-        return 'Avvio elaborazione...'
-      case 'document_created':
-        return 'Documento registrato...'
-      case 'processing':
-        return `Analisi pagina ${progress.pages_processed} di ${progress.total_pages}...`
-      case 'embedding':
-        return `Indicizzazione ${progress.chunks_embedded || 0} di ${progress.total_chunks} frammenti...`
-      case 'complete':
-        return `Completato! ${progress.total_chunks} frammenti indicizzati.`
-      case 'error':
-        return `Errore: ${progress.error}`
-      default:
-        return progress.status
+      case 'uploading': return 'Invio file...'
+      case 'started': return 'Avvio elaborazione...'
+      case 'parsed': return `Testo estratto da ${progress.total_pages} pagine`
+      case 'document_created': return 'Documento registrato...'
+      case 'chunked': return `${progress.total_chunks} frammenti creati da ${progress.total_pages} pagine`
+      case 'embedding': return `Indicizzazione ${progress.chunks_embedded || 0} di ${progress.total_chunks} frammenti...`
+      case 'complete': return `Completato! ${progress.total_chunks} frammenti indicizzati.`
+      case 'error': return `Errore: ${progress.error}`
+      default: return progress.status
     }
   })()
 
@@ -191,7 +142,6 @@ export default function UploadZone({ onUploadComplete }: Props) {
             if (file) handleUpload(file)
           }}
         />
-
         <div className="flex flex-col items-center gap-2">
           <svg className="w-8 h-8 text-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
@@ -222,22 +172,4 @@ export default function UploadZone({ onUploadComplete }: Props) {
       )}
     </div>
   )
-}
-
-// Load PDF.js from CDN
-async function loadPdfJs(): Promise<any> {
-  if ((window as any).pdfjsLib) return (window as any).pdfjsLib
-
-  return new Promise((resolve, reject) => {
-    const script = document.createElement('script')
-    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js'
-    script.onload = () => {
-      const lib = (window as any).pdfjsLib
-      lib.GlobalWorkerOptions.workerSrc =
-        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'
-      resolve(lib)
-    }
-    script.onerror = reject
-    document.head.appendChild(script)
-  })
 }

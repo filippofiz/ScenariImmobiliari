@@ -1,7 +1,8 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { anthropic } from '@/app/lib/claude'
+import { NextRequest } from 'next/server'
 import { getEmbeddings } from '@/app/lib/voyage'
 import { supabaseAdmin } from '@/app/lib/supabase'
+// @ts-expect-error no types for pdf-parse
+import pdfParse from 'pdf-parse'
 
 export const maxDuration = 60
 
@@ -11,46 +12,15 @@ interface Chunk {
   chunk_index: number
 }
 
-// Convert PDF page (as image) to text via Claude vision
-async function extractPageText(pageBase64: string, pageNum: number): Promise<string> {
-  const response = await anthropic.messages.create({
-    model: 'claude-sonnet-4-5-20250514',
-    max_tokens: 4096,
-    messages: [
-      {
-        role: 'user',
-        content: [
-          {
-            type: 'image',
-            source: {
-              type: 'base64',
-              media_type: 'image/png',
-              data: pageBase64,
-            },
-          },
-          {
-            type: 'text',
-            text: `Estrai TUTTO il testo da questa pagina (pagina ${pageNum}) esattamente come scritto. Includi tutti i numeri, tabelle e dati. Mantieni la struttura delle tabelle usando | come separatore di colonne. Non aggiungere commenti o spiegazioni, solo il testo estratto.`,
-          },
-        ],
-      },
-    ],
-  })
-
-  const block = response.content[0]
-  return block.type === 'text' ? block.text : ''
-}
-
-// Split text into overlapping chunks
 function chunkText(text: string, pageNumber: number, startIndex: number): Chunk[] {
   const chunks: Chunk[] = []
-  const words = text.split(/\s+/)
-  const chunkSize = 200 // ~800 tokens ≈ 200 words
-  const overlap = 25   // ~100 tokens ≈ 25 words
+  const words = text.split(/\s+/).filter(w => w.length > 0)
+  const chunkSize = 200
+  const overlap = 25
 
   for (let i = 0; i < words.length; i += chunkSize - overlap) {
     const chunkWords = words.slice(i, i + chunkSize)
-    if (chunkWords.length < 20) break // skip tiny trailing chunks
+    if (chunkWords.length < 20) break
 
     chunks.push({
       content: chunkWords.join(' '),
@@ -73,28 +43,42 @@ export async function POST(request: NextRequest) {
       try {
         const formData = await request.formData()
         const file = formData.get('file') as File | null
-        const pagesDataRaw = formData.get('pages') as string | null
 
-        if (!file && !pagesDataRaw) {
-          send({ error: 'Nessun file o pagine fornite' })
+        if (!file) {
+          send({ error: 'Nessun file fornito' })
           controller.close()
           return
         }
 
-        // Parse pre-rendered pages (base64 images sent from client)
-        let pagesData: string[] = []
-        if (pagesDataRaw) {
-          pagesData = JSON.parse(pagesDataRaw)
+        send({ status: 'started' })
+
+        const buffer = Buffer.from(await file.arrayBuffer())
+
+        // 1. Store raw PDF in Supabase Storage
+        const pdfPath = `${crypto.randomUUID()}/${file.name}`
+        const { error: uploadError } = await supabaseAdmin.storage
+          .from('pdfs')
+          .upload(pdfPath, buffer, { contentType: 'application/pdf' })
+
+        if (uploadError) {
+          send({ error: `Errore upload PDF: ${uploadError.message}` })
+          controller.close()
+          return
         }
 
-        const totalPages = pagesData.length
-        send({ status: 'started', total_pages: totalPages })
+        send({ status: 'pdf_stored' })
 
-        // Create document record
-        const filename = file?.name || 'uploaded-document.pdf'
+        // 2. Extract text
+        const pdf = await pdfParse(buffer)
+        const pages = pdf.text.split(/\f/).filter((p: string) => p.trim().length > 0)
+        const totalPages = pages.length
+
+        send({ status: 'parsed', total_pages: totalPages })
+
+        // 3. Create document record (with pdf_path for later retrieval)
         const { data: doc, error: docError } = await supabaseAdmin
           .from('documents')
-          .insert({ filename })
+          .insert({ filename: file.name, pdf_path: pdfPath })
           .select('id')
           .single()
 
@@ -107,49 +91,28 @@ export async function POST(request: NextRequest) {
         const documentId = doc.id
         send({ status: 'document_created', document_id: documentId })
 
-        // Process pages in batches of 5
+        // 4. Chunk all pages
         const allChunks: Chunk[] = []
-        const batchSize = 5
         let chunkIndex = 0
 
-        for (let batchStart = 0; batchStart < totalPages; batchStart += batchSize) {
-          const batchEnd = Math.min(batchStart + batchSize, totalPages)
-          const batchPromises: Promise<string>[] = []
-
-          for (let i = batchStart; i < batchEnd; i++) {
-            batchPromises.push(extractPageText(pagesData[i], i + 1))
+        for (let i = 0; i < pages.length; i++) {
+          const text = pages[i].trim()
+          if (text) {
+            const chunks = chunkText(text, i + 1, chunkIndex)
+            allChunks.push(...chunks)
+            chunkIndex += chunks.length
           }
-
-          const pageTexts = await Promise.all(batchPromises)
-
-          for (let i = 0; i < pageTexts.length; i++) {
-            const pageNum = batchStart + i + 1
-            const text = pageTexts[i]
-            if (text.trim()) {
-              const chunks = chunkText(text, pageNum, chunkIndex)
-              allChunks.push(...chunks)
-              chunkIndex += chunks.length
-            }
-          }
-
-          send({
-            status: 'processing',
-            pages_processed: batchEnd,
-            total_pages: totalPages,
-            chunks_so_far: allChunks.length,
-          })
         }
 
-        send({ status: 'embedding', total_chunks: allChunks.length })
+        send({ status: 'chunked', total_chunks: allChunks.length, total_pages: totalPages })
 
-        // Generate embeddings in batches of 20
+        // 5. Generate embeddings in batches of 20
         const embeddingBatchSize = 20
         for (let i = 0; i < allChunks.length; i += embeddingBatchSize) {
           const batch = allChunks.slice(i, i + embeddingBatchSize)
           const texts = batch.map(c => c.content)
           const embeddings = await getEmbeddings(texts)
 
-          // Upsert to Supabase
           const rows = batch.map((chunk, j) => ({
             document_id: documentId,
             content: chunk.content,
