@@ -1,8 +1,10 @@
 import Anthropic from '@anthropic-ai/sdk'
 
-export const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY!,
-})
+let _anthropic: Anthropic | null = null
+export function getAnthropic() {
+  if (!_anthropic) _anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
+  return _anthropic
+}
 
 export const SYSTEM_PROMPT = `Sei l'assistente AI di Scenari Immobiliari, specializzato nell'analisi del mercato dei fondi immobiliari italiani.
 

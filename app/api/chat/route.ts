@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server'
-import { anthropic, SYSTEM_PROMPT } from '@/app/lib/claude'
+import { getAnthropic, SYSTEM_PROMPT } from '@/app/lib/claude'
 import { getQueryEmbedding } from '@/app/lib/voyage'
 import { supabaseAdmin } from '@/app/lib/supabase'
 import { PDFDocument } from 'pdf-lib'
@@ -147,7 +147,7 @@ export async function POST(request: NextRequest) {
         // Phase 1: Tool routing with Haiku (fast)
         while (loopCount < maxLoops - 1) {
           loopCount++
-          const response = await anthropic.messages.create({
+          const response = await getAnthropic().messages.create({
             model: 'claude-sonnet-4-6',
             max_tokens: 1024,
             system: TOOL_SYSTEM,
@@ -200,7 +200,7 @@ export async function POST(request: NextRequest) {
         send({ type: 'citations', citations })
 
         {
-          const stream = anthropic.messages.stream({
+          const stream = getAnthropic().messages.stream({
             model: 'claude-sonnet-4-6',
             max_tokens: 4096,
             system: ANSWER_SYSTEM,
